@@ -1,13 +1,12 @@
 import NextAuth from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
+import { connectToDB } from "@/utils/database";
+import User from "@/models/user.js";
 
-import User from '@models/user';
-import { connectToDB } from '@utils/database';
-
-export const authOptions = {
+export default NextAuth({
   providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_ID,
+      clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     }),
   ],
@@ -25,35 +24,46 @@ export const authOptions = {
       return session;
     },
     async signIn({ profile }) {
-      try {
-        await connectToDB();
+  try {
+    await connectToDB();
 
-        const userExists = await User.findOne({ email: profile.email });
+    const userExists = await User.findOne({ email: profile.email });
+    if (userExists) return true;
 
-        if (!userExists) {
-          // Generate a username that fits the schema (8-20 chars)
-          let base = profile.name ? profile.name.replace(/\s/g, "").toLowerCase() : profile.email.split("@")[0];
-          if (base.length < 8) {
-            base = base + Math.random().toString(36).substring(2, 8);
-          }
-          const username = base.substring(0, 20);
+    // Step 1: Create base username (only alphanumeric)
+    let base = profile.name
+      ? profile.name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase()
+      : profile.email.split("@")[0].replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 
-          await User.create({
-            email: profile.email,
-            username: username,
-            image: profile.picture,
-          });
-        }
+    // Step 2: Ensure minimum length 8
+    if (base.length < 8) {
+      base = base + Math.random().toString(36).substring(2, 8);
+    }
 
-        return true;
-      } catch (error) {
-        console.error("Error checking if user exists: ", error.message);
-        return false;
-      }
-    },
+    base = base.substring(0, 20);
+
+    // Step 3: Ensure uniqueness
+    let username = base;
+    let counter = 1;
+
+    while (await User.findOne({ username })) {
+      username = base.substring(0, 18) + counter;
+      counter++;
+    }
+
+    await User.create({
+      email: profile.email,
+      username,
+      image: profile.picture,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Error checking if user exists: ", error.message);
+    return false;
+  }
+}
   },
   secret: process.env.NEXTAUTH_SECRET,
-};
-
-export default NextAuth(authOptions);
+});
 
